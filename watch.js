@@ -7,7 +7,7 @@
  *   node watch.js [--campgrounds <id,...>] [--months <YYYY-MM,...>] [--interval <minutes>]
  *                 [--min-nights <n>] [--start-dates <YYYY-MM-DD,...>]
  *                 [--telegram-token <token>] [--telegram-chat-id <id>]
- *                 [--version]
+ *                 [--version] [--notify-partial]
  */
 
 // No external dependencies needed. Native fetch is available in Node 18+
@@ -35,6 +35,8 @@ const INTERVAL_MS = INTERVAL_MINUTES * 60 * 1000;
 
 const TELEGRAM_TOKEN = args["telegram-token"] || process.env.TELEGRAM_TOKEN || "";
 const TELEGRAM_CHAT_ID = args["telegram-chat-id"] || process.env.TELEGRAM_CHAT_ID || "";
+const NOTIFY_PARTIAL = args["notify-partial"] !== undefined || process.env.NOTIFY_PARTIAL === "true";
+
 
 // ── Validation ────────────────────────────────────────────────────────────────
 if (CAMPGROUND_IDS.length === 0) {
@@ -66,7 +68,9 @@ console.log(`   Interval   : every ${INTERVAL_MINUTES} min`);
 console.log(`   Min nights : ${MIN_NIGHTS} consecutive night(s)`);
 console.log(`   Start dates: run must begin on ${START_DATES.length ? START_DATES.join(" or ") : "any date"}`);
 console.log(`   Telegram   : ${TELEGRAM_TOKEN ? `bot configured, chat ${TELEGRAM_CHAT_ID || "(chat ID not set)"}` : "(not configured)"}`);
+console.log(`   Partial    : ${NOTIFY_PARTIAL ? "notifications enabled" : "disabled (min nights/start dates only)"}`);
 console.log(`   Fetching   : ${CAMPGROUND_IDS.length * MONTHS.length} request(s) per poll\n`);
+
 
 poll(); // run immediately on start
 setInterval(poll, INTERVAL_MS);
@@ -108,9 +112,12 @@ async function poll(replyToId = null) {
             const total = available.reduce((sum, s) => sum + s.availableDates.length, 0);
             const msg = `${total} night(s) available but none have ${MIN_NIGHTS} consecutive nights starting on ${START_DATES.join(" or ")}.`;
             console.log(msg);
-            if (replyToId) telegramSend(`😕 ${esc(msg)}`, replyToId);
+            if (replyToId || (NOTIFY_PARTIAL && TELEGRAM_TOKEN && TELEGRAM_CHAT_ID)) {
+                telegramSend(`ℹ️ *Partial Match*\n${esc(msg)}`, replyToId || TELEGRAM_CHAT_ID);
+            }
             return;
         }
+
 
 
 
