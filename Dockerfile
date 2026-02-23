@@ -3,7 +3,7 @@ FROM node:24-alpine AS base
 
 WORKDIR /app
 
-COPY watch.js ./
+COPY package.json watch.js ./
 
 # All config via env vars (overridable at `docker run` or in compose)
 ENV CAMPGROUND_IDS="" \
