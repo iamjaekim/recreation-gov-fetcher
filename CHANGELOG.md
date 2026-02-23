@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/iamjaekim/recreation-gov-fetcher/compare/v1.0.0...v1.0.1) (2026-02-23)
+
+
+### Bug Fixes
+
+* consolidate docker publish into release-please ([#11](https://github.com/iamjaekim/recreation-gov-fetcher/issues/11)) ([9364311](https://github.com/iamjaekim/recreation-gov-fetcher/commit/93643116b753262f96d7861ff5ce6da862f80edc))
+* consolidate docker publish into release-please and fix yaml syntax ([#12](https://github.com/iamjaekim/recreation-gov-fetcher/issues/12)) ([378721b](https://github.com/iamjaekim/recreation-gov-fetcher/commit/378721ba87cbc7e9193e5a46feb959a4bd9215c6))
+
 ## 1.0.0 (2026-02-23)
 
 
