@@ -64,4 +64,6 @@ The bot listens for commands from your `TELEGRAM_CHAT_ID`:
 ## Automation & Releases
 This project uses **Release Please** for automated versioning and changelogs.
 - **Commits**: Use [Conventional Commits](https://www.conventionalcommits.org/) (e.g., `feat:`, `fix:`) to trigger version bumps.
+- **Merge Strategy**: All PRs are **Squash Merged** to keep the `main` history clean (one commit per feature/fix).
 - **Docker**: New images are automatically published to the Container Registry on every version tag.
+
