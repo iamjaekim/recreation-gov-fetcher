@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/iamjaekim/recreation-gov-fetcher/compare/v1.0.1...v1.1.0) (2026-02-23)
+
+
+### Features
+
+* improve logging, fix telegram escaping, message chunking, and graceful shutdown ([#14](https://github.com/iamjaekim/recreation-gov-fetcher/issues/14)) ([52bce5b](https://github.com/iamjaekim/recreation-gov-fetcher/commit/52bce5b73df7752382706db58595a06d409e29eb))
+
 ## [1.0.1](https://github.com/iamjaekim/recreation-gov-fetcher/compare/v1.0.0...v1.0.1) (2026-02-23)
 
 
