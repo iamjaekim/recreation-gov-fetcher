@@ -1,0 +1,12 @@
+{
+    "name": "recreation-gov-fetcher",
+    "version": "1.0.0",
+    "description": "Polls recreation.gov for campsite availability and alerts when slots open",
+    "type": "commonjs",
+    "scripts": {
+        "watch": "node watch.js"
+    },
+    "engines": {
+        "node": ">=24"
+    }
+}

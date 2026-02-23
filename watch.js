@@ -1,0 +1,247 @@
+#!/usr/bin/env node
+/**
+ * high-performance campsite availability monitor for recreation.gov.
+ * Polls multiple campgrounds and months in parallel, filters for consecutive nights
+ * starting on specific dates, and sends instant Telegram push notifications.
+ * Usage:
+ *   node watch.js [--campgrounds <id,...>] [--months <YYYY-MM,...>] [--interval <minutes>]
+ *                 [--min-nights <n>] [--start-dates <YYYY-MM-DD,...>]
+ *                 [--telegram-token <token>] [--telegram-chat-id <id>]
+ */
+
+// No external dependencies needed. Native fetch is available in Node 18+
+
+// ── Config ────────────────────────────────────────────────────────────────────
+const args = parseArgs(process.argv.slice(2));
+const CAMPGROUND_IDS = (args["campgrounds"] || process.env.CAMPGROUND_IDS || "")
+    .split(",").filter(id => id.trim()).map((id) => id.trim());
+
+const MONTHS = (args["months"] || process.env.MONTHS || "")
+    .split(",").filter(m => m.trim()).map((m) => m.trim());
+
+const START_DATES = (args["start-dates"] || process.env.START_DATES || "")
+    .split(",").filter(d => d.trim()).map((d) => d.trim());
+
+const INTERVAL_MINUTES = parseFloat(args["interval"] || process.env.INTERVAL || "5");
+const MIN_NIGHTS = parseInt(args["min-nights"] || process.env.MIN_NIGHTS || "1", 10);
+const INTERVAL_MS = INTERVAL_MINUTES * 60 * 1000;
+
+const TELEGRAM_TOKEN = args["telegram-token"] || process.env.TELEGRAM_TOKEN || "";
+const TELEGRAM_CHAT_ID = args["telegram-chat-id"] || process.env.TELEGRAM_CHAT_ID || "";
+
+// ── Validation ────────────────────────────────────────────────────────────────
+if (CAMPGROUND_IDS.length === 0) {
+    console.error("❌ Error: CAMPGROUND_IDS is required. Pass --campgrounds or set environment variable.");
+    process.exit(1);
+}
+if (MONTHS.length === 0) {
+    console.error("❌ Error: MONTHS is required (e.g. 2026-05). Pass --months or set environment variable.");
+    process.exit(1);
+}
+if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT_ID) {
+    console.warn("⚠️  Warning: Telegram credentials are not set. Notifications will only be logged to stdout.");
+}
+
+const HEADERS = {
+    accept: "application/json",
+    "cache-control": "no-cache",
+};
+
+let pollCount = 0;
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+console.log(`\n🏕️  Recreation.gov Availability Watcher`);
+console.log(`   Campgrounds: ${CAMPGROUND_IDS.join(", ")}`);
+console.log(`   Months     : ${MONTHS.join(", ")}`);
+console.log(`   Interval   : every ${INTERVAL_MINUTES} min`);
+console.log(`   Min nights : ${MIN_NIGHTS} consecutive night(s)`);
+console.log(`   Start dates: run must begin on ${START_DATES.length ? START_DATES.join(" or ") : "any date"}`);
+console.log(`   Telegram   : ${TELEGRAM_TOKEN ? `bot configured, chat ${TELEGRAM_CHAT_ID || "(chat ID not set)"}` : "(not configured)"}`);
+console.log(`   Fetching   : ${CAMPGROUND_IDS.length * MONTHS.length} request(s) per poll\n`);
+
+poll(); // run immediately on start
+setInterval(poll, INTERVAL_MS);
+
+// ── Core poll ─────────────────────────────────────────────────────────────────
+async function poll() {
+    pollCount++;
+    const now = new Date().toLocaleTimeString();
+    process.stdout.write(`[${now}] Poll #${pollCount} — checking ${MONTHS.length} month(s)... `);
+
+    try {
+        // Fan out all campground × month combos in parallel
+        const combos = CAMPGROUND_IDS.flatMap((cgId) => MONTHS.map((month) => fetchMonth(cgId, month)));
+        const results = await Promise.all(combos);
+        const available = results.flat();
+
+        if (available.length === 0) {
+            console.log("nothing available.");
+            return;
+        }
+
+        // Filter: must have a run of MIN_NIGHTS starting on one of START_DATES
+        const qualified = [];
+        for (const s of available) {
+            const match = runStartingOn(s.availableDates, MIN_NIGHTS, START_DATES);
+            if (match) qualified.push({ ...s, matchedRun: match });
+        }
+
+        if (qualified.length === 0) {
+            const total = available.reduce((sum, s) => sum + s.availableDates.length, 0);
+            console.log(
+                `${total} night(s) available but none have ${MIN_NIGHTS} consecutive nights starting on ${START_DATES.join(" or ")}.`
+            );
+            return;
+        }
+
+        const fresh = qualified;
+
+        if (fresh.length === 0) {
+            console.log(
+                `${qualified.length} matching site(s) — already alerted, waiting for changes.`
+            );
+            return;
+        }
+
+        console.log(`\n🎉 FOUND ${fresh.length} SITE(S)!\n`);
+        for (const s of fresh) {
+            console.log(
+                `  ✅ [${s.campgroundId}] Site ${s.siteName || s.siteId} | Loop: ${s.loop || "—"} | Type: ${s.type || "—"}`
+            );
+            console.log(`     Matched run : ${s.matchedRun.join(" → ")} (${s.matchedRun.length} nights)`);
+            console.log(`     All available: ${s.availableDates.join(", ")}`);
+            console.log(`     Book: https://www.recreation.gov/camping/campgrounds/${s.campgroundId}`);
+        }
+        console.log("");
+
+        if (TELEGRAM_TOKEN && TELEGRAM_CHAT_ID) telegramNotify(fresh);
+    } catch (err) {
+        console.log(`ERROR: ${err.message}`);
+    }
+}
+
+// ── Fetch one campground+month combo ─────────────────────────────────────────
+async function fetchMonth(campgroundId, month) {
+    const startDate = `${month}-01T00:00:00.000Z`;
+    const url = `https://www.recreation.gov/api/camps/availability/campground/${campgroundId}/month?start_date=${encodeURIComponent(startDate)}`;
+
+    try {
+        const res = await fetch(url, { headers: HEADERS });
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status} for ${campgroundId}/${month}`);
+        }
+        const data = await res.json();
+        return parseAvailable(data, campgroundId, month);
+    } catch (err) {
+        throw new Error(`Fetch failed for ${campgroundId}/${month}: ${err.message}`);
+    }
+}
+
+// ── Parse available sites from response ──────────────────────────────────────
+function parseAvailable(data, campgroundId, month) {
+    if (!data.campsites) return [];
+    const results = [];
+
+    for (const [siteId, site] of Object.entries(data.campsites)) {
+        const avail = site.availabilities || {};
+        const availDates = Object.entries(avail)
+            .filter(([, status]) => status === "Available")
+            .map(([date]) => date.slice(0, 10))
+            .sort();
+
+        if (availDates.length > 0) {
+            results.push({
+                campgroundId,
+                siteId,
+                siteName: site.site,
+                loop: site.loop,
+                type: site.campsite_type,
+                availableDates: availDates,
+                month,
+            });
+        }
+    }
+
+    return results;
+}
+
+// ── Telegram push notification ────────────────────────────────────────────────
+async function telegramNotify(sites) {
+    const lines = sites.map(
+        (s) => {
+            const siteInfo = `${s.siteName || s.siteId} (${s.loop || s.type || "—"})`.replace(/([#\(\)\-\[\]])/g, '\\$1');
+            return `� *Site ${siteInfo}*\n📅 ${s.matchedRun.join(" → ")}\n[Book \#${s.campgroundId}](https://www.recreation.gov/camping/campgrounds/${s.campgroundId})`;
+        }
+    );
+
+    const text = `🚨 *SITE ALERT* 🚨\n\n${lines.join("\n\n")}`;
+    const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
+
+    try {
+        const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                chat_id: TELEGRAM_CHAT_ID,
+                text: text,
+                parse_mode: "MarkdownV2",
+            }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            console.error(`  ⚠️  Telegram error: ${data.description}`);
+        } else {
+            console.log(`  📲 Telegram message sent.`);
+        }
+    } catch (err) {
+        console.error(`  ⚠️  Telegram notification failed: ${err.message}`);
+    }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+/**
+ * Finds the first consecutive run of `minNights` dates that begins on one of
+ * the `startDates` ("YYYY-MM-DD"). Returns the matching date array or null.
+ * If startDates is empty, any run of the required length qualifies.
+ */
+function runStartingOn(dates, minNights, startDates) {
+    if (dates.length < minNights) return null;
+
+    // Build all consecutive runs
+    const runs = [];
+    let run = [dates[0]];
+    for (let i = 1; i < dates.length; i++) {
+        const prev = new Date(dates[i - 1]);
+        const curr = new Date(dates[i]);
+        if ((curr - prev) / 86400000 === 1) {
+            run.push(dates[i]);
+        } else {
+            runs.push(run);
+            run = [dates[i]];
+        }
+    }
+    runs.push(run);
+
+    for (const r of runs) {
+        if (r.length < minNights) continue;
+        // Check every possible sub-run of exactly minNights within this run
+        for (let start = 0; start <= r.length - minNights; start++) {
+            const sub = r.slice(start, start + minNights);
+            if (startDates.length === 0 || startDates.includes(sub[0])) {
+                return sub;
+            }
+        }
+    }
+    return null;
+}
+
+function parseArgs(argv) {
+    const out = {};
+    for (let i = 0; i < argv.length; i++) {
+        if (argv[i].startsWith("--") && i + 1 < argv.length) {
+            out[argv[i].slice(2)] = argv[i + 1];
+            i++;
+        }
+    }
+    return out;
+}

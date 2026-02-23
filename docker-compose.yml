@@ -1,0 +1,12 @@
+services:
+  watcher:
+    build: .
+    image: recreation-gov-watcher
+    container_name: rec-gov-watcher
+    restart: unless-stopped
+    env_file: .env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"

@@ -1,0 +1,8 @@
+.git
+.gitignore
+.node-version
+.tool-versions
+.nvmrc
+*.md
+docker-compose.yml
+Dockerfile
