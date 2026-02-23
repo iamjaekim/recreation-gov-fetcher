@@ -55,6 +55,8 @@ const HEADERS = {
 };
 
 let pollCount = 0;
+let lastUpdateId = 0;
+
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 console.log(`\n🏕️  Recreation.gov Availability Watcher`);
@@ -69,13 +71,19 @@ console.log(`   Fetching   : ${CAMPGROUND_IDS.length * MONTHS.length} request(s)
 poll(); // run immediately on start
 setInterval(poll, INTERVAL_MS);
 
+if (TELEGRAM_TOKEN && TELEGRAM_CHAT_ID) {
+    telegramListen();
+}
+
+
 // ── Core poll ─────────────────────────────────────────────────────────────────
-async function poll() {
+async function poll(replyToId = null) {
     pollCount++;
     const now = new Date().toLocaleTimeString();
     process.stdout.write(`[${now}] Poll #${pollCount} — checking ${MONTHS.length} month(s)... `);
 
     try {
+
         // Fan out all campground × month combos in parallel
         const combos = CAMPGROUND_IDS.flatMap((cgId) => MONTHS.map((month) => fetchMonth(cgId, month)));
         const results = await Promise.all(combos);
@@ -83,8 +91,10 @@ async function poll() {
 
         if (available.length === 0) {
             console.log("nothing available.");
+            if (replyToId) telegramSend("📭 Nothing available right now.", replyToId);
             return;
         }
+
 
         // Filter: must have a run of MIN_NIGHTS starting on one of START_DATES
         const qualified = [];
@@ -95,11 +105,12 @@ async function poll() {
 
         if (qualified.length === 0) {
             const total = available.reduce((sum, s) => sum + s.availableDates.length, 0);
-            console.log(
-                `${total} night(s) available but none have ${MIN_NIGHTS} consecutive nights starting on ${START_DATES.join(" or ")}.`
-            );
+            const msg = `${total} night(s) available but none have ${MIN_NIGHTS} consecutive nights starting on ${START_DATES.join(" or ")}.`;
+            console.log(msg);
+            if (replyToId) telegramSend(`😕 ${msg}`, replyToId);
             return;
         }
+
 
         const fresh = qualified;
 
@@ -121,7 +132,8 @@ async function poll() {
         }
         console.log("");
 
-        if (TELEGRAM_TOKEN && TELEGRAM_CHAT_ID) telegramNotify(fresh);
+        if (TELEGRAM_TOKEN && TELEGRAM_CHAT_ID) telegramNotify(fresh, replyToId || TELEGRAM_CHAT_ID);
+
     } catch (err) {
         console.log(`ERROR: ${err.message}`);
     }
@@ -173,37 +185,78 @@ function parseAvailable(data, campgroundId, month) {
 }
 
 // ── Telegram push notification ────────────────────────────────────────────────
-async function telegramNotify(sites) {
+async function telegramNotify(sites, chatId = TELEGRAM_CHAT_ID) {
     const lines = sites.map(
         (s) => {
             const siteInfo = `${s.siteName || s.siteId} (${s.loop || s.type || "—"})`.replace(/([#\(\)\-\[\]])/g, '\\$1');
-            return `� *Site ${siteInfo}*\n📅 ${s.matchedRun.join(" → ")}\n[Book \#${s.campgroundId}](https://www.recreation.gov/camping/campgrounds/${s.campgroundId})`;
+            return `🏕 *Site ${siteInfo}*\n📅 ${s.matchedRun.join(" → ")}\n[Book \#${s.campgroundId}](https://www.recreation.gov/camping/campgrounds/${s.campgroundId})`;
         }
     );
 
     const text = `🚨 *SITE ALERT* 🚨\n\n${lines.join("\n\n")}`;
-    const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
+    return telegramSend(text, chatId);
+}
 
+async function telegramSend(text, chatId) {
+    const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
     try {
         const res = await fetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                chat_id: TELEGRAM_CHAT_ID,
+                chat_id: chatId,
                 text: text,
                 parse_mode: "MarkdownV2",
+                disable_web_page_preview: false
             }),
         });
         const data = await res.json();
-        if (!res.ok) {
-            console.error(`  ⚠️  Telegram error: ${data.description}`);
-        } else {
-            console.log(`  📲 Telegram message sent.`);
-        }
+        if (!res.ok) console.error(`  ⚠️  Telegram error: ${data.description}`);
     } catch (err) {
-        console.error(`  ⚠️  Telegram notification failed: ${err.message}`);
+        console.error(`  ⚠️  Telegram send failed: ${err.message}`);
     }
 }
+
+async function telegramListen() {
+    console.log("   Telegram   : Listening for commands (/check, /status)...");
+    while (true) {
+        try {
+            const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`;
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            if (data.ok && data.result.length > 0) {
+                for (const update of data.result) {
+                    lastUpdateId = update.update_id;
+                    const msg = update.message;
+                    if (msg && msg.chat.id.toString() === TELEGRAM_CHAT_ID.toString() && msg.text) {
+                        const cmd = msg.text.trim().toLowerCase();
+                        if (cmd === "/check" || cmd === "/poll") {
+                            telegramSend("🔍 *Manual check triggered*...", msg.chat.id);
+                            await poll(msg.chat.id);
+                        } else if (cmd === "/status") {
+                            const status = [
+                                `ℹ️ *Watcher Status*`,
+                                `📍 Campgrounds: ${CAMPGROUND_IDS.join(", ")}`,
+                                `� Months: ${MONTHS.join(", ")}`,
+                                `⏱ Interval: every ${INTERVAL_MINUTES}m`,
+                                `🌙 Min Nights: ${MIN_NIGHTS}`,
+                                `🔢 Poll Count: ${pollCount}`
+                            ].join("\n");
+                            telegramSend(status, msg.chat.id);
+                        } else if (cmd === "/help" || cmd === "/start") {
+                            telegramSend("👋 *Campground Watcher Commands*:\n\n/check - Trigger manual poll\n/status - View current settings", msg.chat.id);
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            console.error(`  ⚠️  Telegram listener error: ${err.message}`);
+            await new Promise(r => setTimeout(r, 5000));
+        }
+    }
+}
+
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 /**
