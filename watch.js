@@ -7,12 +7,19 @@
  *   node watch.js [--campgrounds <id,...>] [--months <YYYY-MM,...>] [--interval <minutes>]
  *                 [--min-nights <n>] [--start-dates <YYYY-MM-DD,...>]
  *                 [--telegram-token <token>] [--telegram-chat-id <id>]
+ *                 [--version]
  */
 
 // No external dependencies needed. Native fetch is available in Node 18+
 
 // ── Config ────────────────────────────────────────────────────────────────────
+const pkg = require("./package.json");
 const args = parseArgs(process.argv.slice(2));
+
+if (process.argv.includes("--version") || process.argv.includes("-v")) {
+    console.log(`v${pkg.version}`);
+    process.exit(0);
+}
 const CAMPGROUND_IDS = (args["campgrounds"] || process.env.CAMPGROUND_IDS || "")
     .split(",").filter(id => id.trim()).map((id) => id.trim());
 
