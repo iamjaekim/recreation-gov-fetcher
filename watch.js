@@ -72,19 +72,33 @@ console.log(`   Partial    : ${NOTIFY_PARTIAL ? "notifications enabled" : "disab
 console.log(`   Fetching   : ${CAMPGROUND_IDS.length * MONTHS.length} request(s) per poll\n`);
 
 
-poll(); // run immediately on start
-setInterval(poll, INTERVAL_MS);
+if (require.main === module) {
+    poll(); // run immediately on start
+    setInterval(poll, INTERVAL_MS);
 
-if (TELEGRAM_TOKEN && TELEGRAM_CHAT_ID) {
-    telegramListen();
+    if (TELEGRAM_TOKEN && TELEGRAM_CHAT_ID) {
+        telegramListen();
+    }
+
+    // Graceful shutdown handlers
+    const shutdown = () => {
+        console.log("\n🛑 Gracefully shutting down...");
+        process.exit(0);
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
 }
 
 
 // ── Core poll ─────────────────────────────────────────────────────────────────
-async function poll(replyToId = null) {
-    pollCount++;
+async function poll(replyToId = null, source = "Poll") {
     const now = new Date().toLocaleTimeString();
-    process.stdout.write(`[${now}] Poll #${pollCount} — checking ${MONTHS.length} month(s)... `);
+    let label = source;
+    if (source === "Poll") {
+        pollCount++;
+        label = `Poll #${pollCount}`;
+    }
+    process.stdout.write(`[${now}] ${label} — checking ${MONTHS.length} month(s)... `);
 
     try {
 
@@ -189,16 +203,30 @@ function parseAvailable(data, campgroundId, month) {
 
 // ── Telegram push notification ────────────────────────────────────────────────
 async function telegramNotify(sites, chatId = TELEGRAM_CHAT_ID) {
-    const lines = sites.map(
-        (s) => {
-            const siteInfo = esc(`${s.siteName || s.siteId} (${s.loop || s.type || "—"})`);
-            const runInfo = esc(s.matchedRun.join(" → "));
-            return `🏕 *Site ${siteInfo}*\n📅 ${runInfo}\n[Book \#${esc(s.campgroundId)}](https://www.recreation.gov/camping/campgrounds/${s.campgroundId})`;
-        }
-    );
+    const MAX_LENGTH = 4000;
+    const chunks = [];
+    let currentChunk = "🚨 *SITE ALERT* 🚨\n\n";
 
-    const text = `🚨 *SITE ALERT* 🚨\n\n${lines.join("\n\n")}`;
-    return telegramSend(text, chatId);
+    for (let i = 0; i < sites.length; i++) {
+        const s = sites[i];
+        const siteInfo = esc(`${s.siteName || s.siteId} (${s.loop || s.type || "—"})`);
+        const runInfo = esc(s.matchedRun.join(" → "));
+        const campgroundLabel = esc(`Book Site at Campground ${s.campgroundId}`);
+        const siteBlock = `🔔 *Site ${siteInfo}*\n📅 ${runInfo}\n[${campgroundLabel}](https://www.recreation.gov/camping/campgrounds/${s.campgroundId})\n\n`;
+
+        if (currentChunk.length + siteBlock.length > MAX_LENGTH) {
+            chunks.push(currentChunk.trim());
+            currentChunk = `🚨 *SITE ALERT \\(continued\\)* 🚨\n\n${siteBlock}`;
+        } else {
+            currentChunk += siteBlock;
+        }
+    }
+    chunks.push(currentChunk.trim());
+
+    for (let i = 0; i < chunks.length; i++) {
+        const prefix = chunks.length > 1 ? esc(`(${i + 1}/${chunks.length}) `) : "";
+        await telegramSend(`${prefix}${chunks[i]}`, chatId);
+    }
 }
 
 
@@ -224,7 +252,11 @@ async function telegramSend(text, chatId) {
 
 function esc(str) {
     if (!str) return "";
-    return str.toString().replace(/([_*\[\]()~`>#+\-=|{}.!])/g, "\\$1");
+    // MarkdownV2 reserved: _ * [ ] ( ) ~ ` > # + - = | { } . !
+    // We must be extremely thorough here.
+    return str.toString()
+        .replace(/\\/g, "\\\\") // Escape backslashes first
+        .replace(/([_*\[\]()~`>#+\-=|{}.!])/g, "\\$1");
 }
 
 async function telegramListen() {
@@ -244,7 +276,7 @@ async function telegramListen() {
                         const cmd = msg.text.trim().toLowerCase();
                         if (cmd === "/check" || cmd === "/poll") {
                             telegramSend("🔍 *Manual check triggered*\\.\\.\\.", msg.chat.id);
-                            await poll(msg.chat.id);
+                            await poll(msg.chat.id, "Check");
                         } else if (cmd === "/status") {
                             const status = [
                                 `ℹ️ *Watcher Status*`,
@@ -263,8 +295,14 @@ async function telegramListen() {
                 }
             }
         } catch (err) {
-            console.error(`  ⚠️  Telegram listener error: ${err.message}`);
-            await new Promise(r => setTimeout(r, 5000));
+            if (err.message.includes("409")) {
+                console.error(`  ⚠️  Telegram Conflict (409): Another instance is likely running with this token.`);
+                console.error(`      Please stop all other bot processes or containers.`);
+                await new Promise(r => setTimeout(r, 10000)); // wait longer on conflict
+            } else {
+                console.error(`  ⚠️  Telegram listener error: ${err.message}`);
+                await new Promise(r => setTimeout(r, 5000));
+            }
         }
     }
 }
@@ -317,3 +355,11 @@ function parseArgs(argv) {
     }
     return out;
 }
+
+module.exports = {
+    runStartingOn,
+    parseAvailable,
+    esc,
+    poll,
+    parseArgs,
+};
