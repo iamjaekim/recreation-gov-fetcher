@@ -5,10 +5,13 @@ on:
     branches:
       - main
 
-    permissions:
-      contents: write
-      pull-requests: write
-      packages: write
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  release-please:
     runs-on: ubuntu-latest
     steps:
       - uses: googleapis/release-please-action@v4
@@ -16,7 +19,6 @@ on:
         with:
           release-type: node
 
-      # Build and push Docker image only when a release is created
       - name: Checkout repository
         if: ${{ steps.release.outputs.release_created }}
         uses: actions/checkout@v6
