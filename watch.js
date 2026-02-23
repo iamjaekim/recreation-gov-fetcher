@@ -188,14 +188,16 @@ function parseAvailable(data, campgroundId, month) {
 async function telegramNotify(sites, chatId = TELEGRAM_CHAT_ID) {
     const lines = sites.map(
         (s) => {
-            const siteInfo = `${s.siteName || s.siteId} (${s.loop || s.type || "—"})`.replace(/([#\(\)\-\[\]])/g, '\\$1');
-            return `🏕 *Site ${siteInfo}*\n📅 ${s.matchedRun.join(" → ")}\n[Book \#${s.campgroundId}](https://www.recreation.gov/camping/campgrounds/${s.campgroundId})`;
+            const siteInfo = esc(`${s.siteName || s.siteId} (${s.loop || s.type || "—"})`);
+            const runInfo = esc(s.matchedRun.join(" → "));
+            return `🏕 *Site ${siteInfo}*\n📅 ${runInfo}\n[Book \#${esc(s.campgroundId)}](https://www.recreation.gov/camping/campgrounds/${s.campgroundId})`;
         }
     );
 
     const text = `🚨 *SITE ALERT* 🚨\n\n${lines.join("\n\n")}`;
     return telegramSend(text, chatId);
 }
+
 
 async function telegramSend(text, chatId) {
     const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
@@ -217,7 +219,13 @@ async function telegramSend(text, chatId) {
     }
 }
 
+function esc(str) {
+    if (!str) return "";
+    return str.toString().replace(/([_*\[\]()~`>#+\-=|{}.!])/g, "\\$1");
+}
+
 async function telegramListen() {
+
     console.log("   Telegram   : Listening for commands (/check, /status)...");
     while (true) {
         try {
@@ -237,16 +245,17 @@ async function telegramListen() {
                         } else if (cmd === "/status") {
                             const status = [
                                 `ℹ️ *Watcher Status*`,
-                                `📍 Campgrounds: ${CAMPGROUND_IDS.join(", ")}`,
-                                `� Months: ${MONTHS.join(", ")}`,
-                                `⏱ Interval: every ${INTERVAL_MINUTES}m`,
-                                `🌙 Min Nights: ${MIN_NIGHTS}`,
-                                `🔢 Poll Count: ${pollCount}`
+                                `📍 Campgrounds: ${esc(CAMPGROUND_IDS.join(", "))}`,
+                                `📅 Months: ${esc(MONTHS.join(", "))}`,
+                                `⏱ Interval: every ${esc(INTERVAL_MINUTES)}m`,
+                                `🌙 Min Nights: ${esc(MIN_NIGHTS)}`,
+                                `🔢 Poll Count: ${esc(pollCount)}`
                             ].join("\n");
                             telegramSend(status, msg.chat.id);
                         } else if (cmd === "/help" || cmd === "/start") {
-                            telegramSend("👋 *Campground Watcher Commands*:\n\n/check - Trigger manual poll\n/status - View current settings", msg.chat.id);
+                            telegramSend("👋 *Campground Watcher Commands*:\n\n/check \\- Trigger manual poll\n/status \\- View current settings", msg.chat.id);
                         }
+
                     }
                 }
             }
