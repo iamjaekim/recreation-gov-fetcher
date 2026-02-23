@@ -91,9 +91,10 @@ async function poll(replyToId = null) {
 
         if (available.length === 0) {
             console.log("nothing available.");
-            if (replyToId) telegramSend("📭 Nothing available right now.", replyToId);
+            if (replyToId) telegramSend("📭 Nothing available right now\\.", replyToId);
             return;
         }
+
 
 
         // Filter: must have a run of MIN_NIGHTS starting on one of START_DATES
@@ -107,9 +108,10 @@ async function poll(replyToId = null) {
             const total = available.reduce((sum, s) => sum + s.availableDates.length, 0);
             const msg = `${total} night(s) available but none have ${MIN_NIGHTS} consecutive nights starting on ${START_DATES.join(" or ")}.`;
             console.log(msg);
-            if (replyToId) telegramSend(`😕 ${msg}`, replyToId);
+            if (replyToId) telegramSend(`😕 ${esc(msg)}`, replyToId);
             return;
         }
+
 
 
         const fresh = qualified;
@@ -240,7 +242,7 @@ async function telegramListen() {
                     if (msg && msg.chat.id.toString() === TELEGRAM_CHAT_ID.toString() && msg.text) {
                         const cmd = msg.text.trim().toLowerCase();
                         if (cmd === "/check" || cmd === "/poll") {
-                            telegramSend("🔍 *Manual check triggered*...", msg.chat.id);
+                            telegramSend("🔍 *Manual check triggered*\\.\\.\\.", msg.chat.id);
                             await poll(msg.chat.id);
                         } else if (cmd === "/status") {
                             const status = [
