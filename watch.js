@@ -116,12 +116,6 @@ async function poll(replyToId = null) {
 
         const fresh = qualified;
 
-        if (fresh.length === 0) {
-            console.log(
-                `${qualified.length} matching site(s) — already alerted, waiting for changes.`
-            );
-            return;
-        }
 
         console.log(`\n🎉 FOUND ${fresh.length} SITE(S)!\n`);
         for (const s of fresh) {
